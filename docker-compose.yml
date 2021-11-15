@@ -1,0 +1,15 @@
+version: '3'
+services:
+  kamailio:
+    image: mailsvb/kamailio:5.5.2
+    container_name: kamailio
+    volumes:
+      - ./config:/usr/etc/kamailio:ro
+    network_mode: "host"
+    restart: unless-stopped
+    command: /usr/sbin/kamailio -DD
+    environment:
+      - PUBLIC_IP=${PUBLIC_IP:-0.0.0.0}
+      - UDP_PORT=${UDP_PORT:-5060}
+      - TCP_PORT=${TCP_PORT:-5060}
+      - TLS_PORT=${TLS_PORT:-5061}
