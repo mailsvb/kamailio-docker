@@ -22,7 +22,7 @@
 `docker compose down --rmi all`
 
 ## Environment variables
-`PUBLIC_IP=1.2.3.4` default=0.0.0.0
-`UDP_PORT` default=5060
-`TCP_PORT` default=5060
-`TLS_PORT` default=5061
+* `PUBLIC_IP=1.2.3.4` default=0.0.0.0
+* `UDP_PORT` default=5060
+* `TCP_PORT` default=5060
+* `TLS_PORT` default=5061
