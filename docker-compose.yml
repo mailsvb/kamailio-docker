@@ -1,7 +1,7 @@
 version: '3'
 services:
   kamailio:
-    image: mailsvb/kamailio:5.5.2
+    image: mailsvb/kamailio:5.5.3
     container_name: kamailio
     volumes:
       - ./config:/usr/etc/kamailio:ro
