@@ -1,15 +1,19 @@
 version: '3'
 services:
-  kamailio:
-    image: mailsvb/kamailio:5.5.4
-    container_name: kamailio
-    volumes:
-      - ./config:/usr/etc/kamailio:ro
-    network_mode: "host"
-    restart: unless-stopped
-    command: /usr/sbin/kamailio -DD
-    environment:
-      - PUBLIC_IP=${PUBLIC_IP:-0.0.0.0}
-      - UDP_PORT=${UDP_PORT:-5060}
-      - TCP_PORT=${TCP_PORT:-5060}
-      - TLS_PORT=${TLS_PORT:-5061}
+    rtpproxy:
+        image: mailsvb/rtpproxy:latest
+        container_name: rtpproxy
+        network_mode: "host"
+        restart: unless-stopped
+        command: /usr/bin/rtpproxy -u rtpproxy:rtpproxy -f -s udp:127.0.0.1:22222 -m 49000 -M 49999 -d DBUG
+
+    kamailio:
+        image: mailsvb/kamailio:latest
+        container_name: kamailio
+        volumes:
+            - ./config:/usr/etc/kamailio:ro
+        network_mode: "host"
+        restart: unless-stopped
+        command: /usr/sbin/kamailio -DD
+        environment:
+            - PUBLIC_IP=${PUBLIC_IP:-0.0.0.0}

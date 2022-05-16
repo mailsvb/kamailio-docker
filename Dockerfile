@@ -1,4 +1,5 @@
 FROM alpine:latest
+MAINTAINER mailsvb <mailsvb@gmail.com>
 
 RUN apk update && apk upgrade && \
     apk add --no-cache bison git openssl-dev flex make gcc g++ musl-dev libunistring-dev lksctp-tools-dev linux-headers && \
