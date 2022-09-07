@@ -3,6 +3,7 @@ MAINTAINER mailsvb <mailsvb@gmail.com>
 
 RUN apk update && apk upgrade && \
     apk add --no-cache bison git openssl-dev flex make gcc g++ musl-dev libunistring-dev lksctp-tools-dev linux-headers cargo && \
+    git -C /tmp clone --depth 1 https://github.com/miconda/ruxc && \
     git -C /tmp clone --depth 1 --branch 5.6.1 https://github.com/kamailio/kamailio && \
     cargo build --release --manifest-path=/tmp/ruxc/Cargo.toml && \
     cp /tmp/ruxc/include/ruxc.h /tmp/ruxc/target/release/libruxc.a /tmp/kamailio/src/modules/ruxc/ && \
