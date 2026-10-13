@@ -1,0 +1,60 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: kamailio
+            # config check with the variables kamailio.cfg needs
+            test: >-
+              docker run --rm -e PUBLIC_IP=127.0.0.1 -e EXTERNAL_IP=127.0.0.1 -e SIP_REALM=kamailio
+              -e DBURL=postgres://kamailio:x@127.0.0.1:5432/kamailio
+              sip-server/kamailio:ci kamailio -c
+          - image: rtpengine
+            test: docker run --rm sip-server/rtpengine:ci rtpengine --version
+          - image: postgres
+            test: docker run --rm sip-server/postgres:ci ls /docker-entrypoint-initdb.d/01-kamailio-schema.sql
+          - image: admin
+            test: docker run --rm sip-server/admin:ci test -x /usr/local/bin/admin
+          - image: echo
+            test: docker run --rm sip-server/echo:ci sh -c 'sipp -v | head -2'
+          - image: media
+            test: docker run --rm --entrypoint asterisk sip-server/media:ci -V
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx environment
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.image }}
+          load: true
+          tags: sip-server/${{ matrix.image }}:ci
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      - name: Test image
+        run: ${{ matrix.test }}
+
+  compose:
+    name: Validate docker-compose.yml
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: docker compose config
+        run: cp .env.example .env && docker compose config --quiet

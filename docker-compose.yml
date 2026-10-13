@@ -1,19 +1,111 @@
-version: '3'
+name: sip-server
+
 services:
-    rtpproxy:
-        image: mailsvb/rtpproxy:latest
-        container_name: rtpproxy
+    rtpengine:
+        build: ./rtpengine
+        image: ${IMAGE_PREFIX:-sip-server}/rtpengine:${IMAGE_TAG:-latest}
+        container_name: rtpengine
         network_mode: "host"
         restart: unless-stopped
-        command: /usr/bin/rtpproxy -u rtpproxy:rtpproxy -f -s udp:127.0.0.1:22222 -m 49000 -M 49999 -d DBUG
+        # ng control on 127.0.0.1:22222 (kamailio), RTP on 49000-49999
+        # interface "lan": PUBLIC_IP towards phones and LAN trunks
+        # interface "wan": same local address, advertises EXTERNAL_IP towards trunks behind NAT
+        command: >-
+            rtpengine --foreground --log-stderr --table=-1 --listen-ng=127.0.0.1:22222
+            --interface=lan/${PUBLIC_IP:?set PUBLIC_IP in .env}
+            --interface=wan/${PUBLIC_IP}!${EXTERNAL_IP:-${PUBLIC_IP}}
+            --port-min=49000 --port-max=49999
+
+    echo:
+        build: ./echo
+        image: ${IMAGE_PREFIX:-sip-server}/echo:${IMAGE_TAG:-latest}
+        container_name: echo
+        network_mode: "host"
+        restart: unless-stopped
+        # SIP on 127.0.0.1:5090 (only kamailio talks to it), RTP echo on PUBLIC_IP:48000
+        command: sh -c "exec sipp -sf /etc/sipp/echo.xml -i 127.0.0.1 -p 5090 -mi ${PUBLIC_IP:-0.0.0.0} -mp 48000 -rtp_echo -nostdin -trace_err -error_file /tmp/echo_errors.log > /dev/null"
+
+    media:
+        build: ./media
+        image: ${IMAGE_PREFIX:-sip-server}/media:${IMAGE_TAG:-latest}
+        container_name: media
+        network_mode: "host"
+        restart: unless-stopped
+        # asterisk: announcements and voicemail, SIP on 127.0.0.1:5080 (only
+        # kamailio talks to it), RTP to the phones on PUBLIC_IP:47000-47999
+        depends_on:
+            postgres:
+                condition: service_healthy
+        volumes:
+            # voicemail messages and greetings
+            - voicemail:/var/spool/asterisk/voicemail
+        environment:
+            - PUBLIC_IP=${PUBLIC_IP:?set PUBLIC_IP in .env}
+            - DB_PASSWORD=${DB_PASSWORD:?set DB_PASSWORD in .env}
+
+    postgres:
+        build: ./postgres
+        image: ${IMAGE_PREFIX:-sip-server}/postgres:${IMAGE_TAG:-latest}
+        container_name: postgres
+        restart: unless-stopped
+        ports:
+            - "127.0.0.1:5432:5432"
+        volumes:
+            - pgdata:/var/lib/postgresql/data
+        environment:
+            - POSTGRES_DB=kamailio
+            - POSTGRES_USER=kamailio
+            - POSTGRES_PASSWORD=${DB_PASSWORD:?set DB_PASSWORD in .env}
+            - PUBLIC_IP=${PUBLIC_IP:-}
+            - SIP_REALM=${SIP_REALM:-kamailio}
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U kamailio -d kamailio"]
+            interval: 5s
+            timeout: 3s
+            retries: 10
 
     kamailio:
-        image: mailsvb/kamailio:latest
+        build: ./kamailio
+        image: ${IMAGE_PREFIX:-sip-server}/kamailio:${IMAGE_TAG:-latest}
         container_name: kamailio
         volumes:
-            - ./config:/usr/etc/kamailio:ro
+            # RPC sockets, shared with the admin UI
+            - kamailio-run:/var/run/kamailio
         network_mode: "host"
         restart: unless-stopped
-        command: /usr/sbin/kamailio -DD
+        depends_on:
+            postgres:
+                condition: service_healthy
+            rtpengine:
+                condition: service_started
         environment:
             - PUBLIC_IP=${PUBLIC_IP:-0.0.0.0}
+            - EXTERNAL_IP=${EXTERNAL_IP:-${PUBLIC_IP:-0.0.0.0}}
+            - SIP_REALM=${SIP_REALM:-kamailio}
+            - DBURL=postgres://kamailio:${DB_PASSWORD:?set DB_PASSWORD in .env}@127.0.0.1:5432/kamailio
+
+    admin:
+        build: ./admin
+        image: ${IMAGE_PREFIX:-sip-server}/admin:${IMAGE_TAG:-latest}
+        container_name: admin
+        network_mode: "host"
+        restart: unless-stopped
+        depends_on:
+            postgres:
+                condition: service_healthy
+        volumes:
+            - kamailio-run:/var/run/kamailio
+            # optional: restart and container state via the docker API (gives root
+            # access to the host!), with SELinux also needs security_opt label=disable.
+            # Without it kamailio is restarted with RPC core.kill + restart policy.
+            # - /var/run/docker.sock:/var/run/docker.sock
+        environment:
+            # no authentication: bind to a trusted address
+            - ADMIN_LISTEN=${ADMIN_LISTEN:-0.0.0.0:8080}
+            - KAMAILIO_CONTAINER=kamailio
+            - DBURL=postgres://kamailio:${DB_PASSWORD:?set DB_PASSWORD in .env}@127.0.0.1:5432/kamailio
+
+volumes:
+    pgdata:
+    kamailio-run:
+    voicemail:

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kamailio Admin</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Kamailio Admin</h1>
+  <div id="status" class="status">…</div>
+  <div class="actions">
+    <button id="btn-reload" title="uac.reg_reload: re-read trunk registrations from the database">Reload registrations</button>
+    <button id="btn-restart" class="danger" title="Restart the kamailio container">Restart kamailio</button>
+    <button id="btn-console" title="Run kamailio RPC commands">RPC console</button>
+  </div>
+</header>
+
+<div class="main">
+  <nav id="tables"></nav>
+  <section class="content">
+    <div class="toolbar">
+      <h2 id="table-name">Select a table</h2>
+      <span id="changes" class="changes"></span>
+      <span class="spacer"></span>
+      <button id="btn-add" disabled>+ Row</button>
+      <button id="btn-null" disabled title="Set selected cell to NULL (Shift+Del)">Set NULL</button>
+      <button id="btn-discard" disabled>Discard</button>
+      <button id="btn-save" class="primary" disabled title="Ctrl+S">Save</button>
+    </div>
+    <div id="message" class="message" hidden></div>
+    <div id="grid-wrap" class="grid-wrap" tabindex="0"><table id="grid"></table></div>
+    <p class="help">Click a cell, then type or press Enter/F2 to edit · Enter/Tab confirm · Esc cancel · arrows move · Space toggles booleans · Del clears · Shift+Del sets NULL · Ctrl+S saves</p>
+  </section>
+</div>
+
+<div id="console" class="console" hidden>
+  <div class="console-head">
+    <input id="rpc-method" placeholder="method, e.g. uac.reg_dump" list="rpc-methods">
+    <datalist id="rpc-methods">
+      <option value="core.uptime"><option value="core.version"><option value="core.psx">
+      <option value="uac.reg_dump"><option value="uac.reg_info"><option value="uac.reg_reload">
+      <option value="ul.dump"><option value="dlg.list"><option value="tm.stats"><option value="system.listMethods">
+    </datalist>
+    <input id="rpc-params" placeholder='params as JSON array, e.g. ["location"]'>
+    <button id="btn-rpc" class="primary">Run</button>
+    <button id="btn-console-close">×</button>
+  </div>
+  <pre id="rpc-out"></pre>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
