@@ -2,7 +2,7 @@
 
 [![build](https://github.com/mailsvb/kamailio-docker/actions/workflows/build.yml/badge.svg)](https://github.com/mailsvb/kamailio-docker/actions/workflows/build.yml)
 
-SIP server based on Kamailio with PostgreSQL provisioning, rtpengine media relay, an echo test service and a web admin UI. All images are built from this repository with `docker compose`.
+SIP server based on Kamailio with PostgreSQL provisioning, rtpengine media relay, an Asterisk media server for announcements and voicemail, an echo test service and a web admin UI. All images are built from this repository with `docker compose`.
 
 | Service / container | Image | Directory | Description |
 |---|---|---|---|
@@ -11,8 +11,9 @@ SIP server based on Kamailio with PostgreSQL provisioning, rtpengine media relay
 | `postgres` | `sip-server/postgres` | `postgres/` | PostgreSQL 17 with the schema in `postgres/init/` |
 | `admin` | `sip-server/admin` | `admin/` | web UI for the database and kamailio RPC |
 | `echo` | `sip-server/echo` | `echo/` | sipp echo test, reached by dialling `*43` |
+| `media` | `sip-server/media` | `media/` | Asterisk: announcements and voicemail, only reachable by kamailio (SIP on 127.0.0.1:5080) |
 
-Persistent data lives in named docker volumes only: `sip-server_pgdata` (database) and `sip-server_kamailio-run` (RPC sockets shared by kamailio and admin). Configuration and SQL scripts are baked into the images, there are no bind mounts.
+Persistent data lives in named docker volumes only: `sip-server_pgdata` (database), `sip-server_voicemail` (voicemail messages and greetings) and `sip-server_kamailio-run` (RPC sockets shared by kamailio and admin). Configuration and SQL scripts are baked into the images, there are no bind mounts.
 
 ## Requirements
 *  docker
@@ -40,7 +41,7 @@ Versions can be overridden with build args, e.g. `docker compose build --build-a
 Set `IMAGE_PREFIX=ghcr.io/<owner>` (and optionally `IMAGE_TAG`) in `.env`, then `docker compose pull && docker compose up -d`.
 
 ## CI
-* `build` (push to main, pull requests): builds all five images and runs a smoke test for each (kamailio config check, `rtpengine --version`, ...), validates `docker-compose.yml`.
+* `build` (push to main, pull requests): builds all six images and runs a smoke test for each (kamailio config check, `rtpengine --version`, `asterisk -V`, ...), validates `docker-compose.yml`.
 * `publish` (manual, *Actions → publish → Run workflow*): builds all images and pushes them to the GitHub Container Registry as `ghcr.io/<repository owner>/<image>` with tags `latest`, `sha-<commit>` and, for kamailio and rtpengine, the version from the Dockerfile (e.g. `6.1.4`, `mr26.2.1.3`). Uses the built-in `GITHUB_TOKEN`, no secrets needed. New packages are private by default, change their visibility in the package settings.
 
 ## Environment variables
@@ -62,7 +63,7 @@ Active calls: `docker compose exec kamailio kamcmd rtpengine.show all`
 ## Users, groups and trunks
 Users and trunks live in a PostgreSQL database (service `postgres`). The schema in `postgres/init/` is loaded when the data volume is created for the first time. Updates for existing databases are in `postgres/migrations/`, apply them with e.g.
 
-`docker compose exec -T postgres psql -U kamailio kamailio < postgres/migrations/008-device-type.sql`
+`docker compose exec -T postgres psql -U kamailio kamailio < postgres/migrations/009-media.sql`
 
 * Only users in table `subscriber` can register or place calls (digest authentication, plain text `password`).
 * Parallel registrations per user: `settings.max_contacts` (default 1), overridden per user by `subscriber.max_contacts` (NULL = global value). Read on every REGISTER, no reload needed.
@@ -73,11 +74,12 @@ Users and trunks live in a PostgreSQL database (service `postgres`). The schema 
 * Every user gets a dedicated trunk for outgoing calls (`subscriber.trunk_id`, set with `kam_user_trunk`).
 * Optional fallback for users without a dedicated trunk: users belong to groups (`user_group`), trunks are assigned to groups (`group_trunk`, lowest `priority` wins).
 * Dialled numbers are handled in this order:
-  1. feature codes starting with `*` or `#`, never sent to a trunk:
+  1. the voicemail number `settings.voicemail_number` (default `*86`): own voicemail box, see [Voicemail and announcements](#voicemail-and-announcements)
+  2. feature codes starting with `*` or `#`, never sent to a trunk:
      * `*43` echo test (service `echo`, sipp answering on 127.0.0.1:5090 and echoing RTP on `PUBLIC_IP`:48000)
-     * all others are answered with 404
-  2. internal numbers: the extension (`username`) or the `number` of a local user
-  3. everything else leaves through the caller's trunk
+     * all others: announcement "number not in service" (404)
+  3. internal numbers: the extension (`username`) or the `number` of a local user. Not registered, not answered, busy or declined: voicemail of the user
+  4. everything else leaves through the caller's trunk
 * Media: internal calls use direct media between the phones, trunk calls are relayed by rtpengine
 * Trunk calls:
   * From = trunk account (`from_user`, falls back to `auth_username`)
@@ -135,6 +137,35 @@ See `postgres/examples/example-data.sql` for all trunk types. After changing tru
 `docker compose exec kamailio kamcmd uac.reg_reload`
 
 `docker compose exec kamailio kamcmd uac.reg_dump` shows their state.
+
+## Voicemail and announcements
+Service `media` (Asterisk 22, `media/`) plays announcements and hosts the voicemail boxes. Only kamailio talks to it (SIP on `127.0.0.1:5080`), RTP flows directly between the phones and `PUBLIC_IP`:47000-47999. It reads the boxes from the database (views `vm_mailbox`, `ps_endpoints`, `ps_aors`), the messages are stored in the volume `sip-server_voicemail`.
+
+Voicemail: every user in `subscriber` has a box (context `default`, mailbox = `username`).
+* Internal calls go to the callee's voicemail when the callee is not registered (immediately), does not answer within `settings.voicemail_timeout` seconds (default 20), or replies busy / declined (486, 600, 603: busy greeting). Read on every call, no reload needed.
+* Dialling `settings.voicemail_number` (default `*86`, can also be a plain number like `8000`) opens the caller's own box. It asks for the PIN `subscriber.vm_pin` (default `0000`); a PIN changed in the voicemail menu is written back to `subscriber.vm_pin`.
+* Message waiting indication: asterisk sends `NOTIFY message-summary` for `sip:<user>@127.0.0.1`, kamailio forwards it to all registered devices of the user (unsolicited MWI). Phones that `SUBSCRIBE` to `message-summary` (to their own AoR or the voicemail number) get a subscription for their own box. Unsolicited MWI for users added while `media` is running starts after `docker compose exec media asterisk -rx "module reload res_pjsip_mwi.so"` (or a restart of `media`).
+* Incoming trunk calls do not go to voicemail (a trunk rings a group, see [Incoming calls](#incoming-calls)).
+
+```sql
+-- voicemail number and ring time before voicemail
+UPDATE settings SET voicemail_number = '8000', voicemail_timeout = 25;
+-- PIN of a user
+UPDATE subscriber SET vm_pin = '4711' WHERE username = '1001';
+```
+
+Announcements (early media, the call is never answered; English prompts of `asterisk-sounds-en`):
+
+| Case | Prompt | Reply to the phone |
+|---|---|---|
+| unknown feature code | `ss-noservice` | 404 |
+| no trunk assigned to the caller | `cannot-complete-as-dialed` | 403 |
+| trunk replies 404, 484 or 604 | `ss-noservice` | 404 |
+| trunk replies 5xx or does not answer at all | `all-circuits-busy-now` | 500 |
+
+Busy, declined and unanswered trunk calls (486, 600, 603, 480, 408, 487) are passed to the phone unchanged. Prompts and causes are set in `media/config/extensions.conf`.
+
+Voicemail boxes: `docker compose exec media asterisk -rx "voicemail show users for default"`
 
 ## Admin web UI
 Service `admin` (Go, `admin/`) serves a web UI on `http://<host>:8080` (`ADMIN_LISTEN`):

@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [kamailio, rtpengine, postgres, admin, echo]
+        image: [kamailio, rtpengine, postgres, admin, echo, media]
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4

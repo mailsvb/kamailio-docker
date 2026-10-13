@@ -28,6 +28,8 @@ jobs:
             test: docker run --rm sip-server/admin:ci test -x /usr/local/bin/admin
           - image: echo
             test: docker run --rm sip-server/echo:ci sh -c 'sipp -v | head -2'
+          - image: media
+            test: docker run --rm --entrypoint asterisk sip-server/media:ci -V
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
